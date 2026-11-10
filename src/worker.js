@@ -11,7 +11,7 @@
  * the worker and the main thread.
  */
 
-import * as fengari from "fengari-web";
+import fengari from "fengari-web";
 
 onmessage = (e) => {
   const { code, settings, globals } = e.data || {};
@@ -31,27 +31,38 @@ function runLua(code, settings, globals) {
   let output = "";
   let isError = false;
 
+  // settings is the nested object from settings.js: settings.sandbox.*,
+  // settings.runtime.*, settings.algebra.*, settings.errors.*.
+  const sandbox = s.sandbox || {};
+  const runtime = s.runtime || {};
+  const errors  = s.errors  || {};
+
   // ── Sandbox: block forbidden statements/keywords ──────────────────────────
-  const blocked = s.blockedKeywords || [];
+  const blocked = sandbox.blockedKeywords || [];
   if (blocked.length) {
     const scan = String(code || "");
     for (const kw of blocked) {
-      const re = new RegExp("\\b" + escapeRe(kw.pattern) + "\\b");
+      // Accept both "while" and { pattern: "while", message: "..." }
+      const pattern = typeof kw === "string" ? kw : kw.pattern;
+      const message = typeof kw === "string"
+        ? `Keyword "${kw}" is not allowed.`
+        : (kw.message || `Keyword "${pattern}" is not allowed.`);
+      const re = new RegExp("\\b" + escapeRe(pattern) + "\\b");
       if (re.test(scan)) {
-        return { output: kw.message, isError: true };
+        return { output: message, isError: true };
       }
     }
   }
 
   // ── Sandbox: instruction budget via lua_sethook ────────────────────────────
-  const maxInstr = s.maxInstructions || 0;
+  const maxInstr = sandbox.maxInstructions || 0;
   let instrCount = 0;
   if (maxInstr > 0 && typeof fengari.lua.lua_sethook === "function") {
     fengari.lua.lua_sethook(L, hook, fengari.lua.LUA_MASKCOUNT, maxInstr);
   }
 
   // ── Sandbox: wall-clock timeout via lua_sethook (count-based fallback) ────
-  const maxSeconds = s.maxSeconds || 0;
+  const maxSeconds = sandbox.maxSeconds || 0;
   let deadline = 0;
   if (maxSeconds > 0) deadline = Date.now() + maxSeconds * 1000;
 
@@ -60,12 +71,12 @@ function runLua(code, settings, globals) {
       instrCount++;
       if (instrCount > maxInstr) {
         fengari.lua.lua_sethook(L, null, 0, 0);
-        fengari.lua.luaL_error(L, fengari.to_luastring("instruction limit exceeded"));
+        fengari.lauxlib.luaL_error(L, fengari.to_luastring("instruction limit exceeded"));
       }
     }
     if (maxSeconds > 0 && Date.now() > deadline) {
       fengari.lua.lua_sethook(L, null, 0, 0);
-      fengari.lua.luaL_error(L, fengari.to_luastring("time limit exceeded"));
+      fengari.lauxlib.luaL_error(L, fengari.to_luastring("time limit exceeded"));
     }
   }
 
@@ -93,11 +104,21 @@ function runLua(code, settings, globals) {
         try {
           return fn(L);
         } catch (err) {
-          fengari.lua.luaL_error(L, fengari.to_luastring(String(err?.message || err)));
+          fengari.lauxlib.luaL_error(L, fengari.to_luastring(String(err?.message || err)));
+          return 0; // unreachable; luaL_error longjmps but TypeScript/JS needs it
         }
       });
       fengari.lua.lua_setglobal(L, name);
     }
+  }
+
+  // ── Remove unwanted standard globals ───────────────────────────────────────
+  const remove = s.runtime && Array.isArray(s.runtime.removeGlobals)
+    ? s.runtime.removeGlobals
+    : [];
+  for (const name of remove) {
+    fengari.lua.lua_pushnil(L);
+    fengari.lua.lua_setglobal(L, name);
   }
 
   // ── Execute ────────────────────────────────────────────────────────────────
@@ -105,8 +126,8 @@ function runLua(code, settings, globals) {
   if (status !== 0) {
     isError = true;
     let raw = fengari.lua.lua_tojsstring(L, -1) || "";
-    // Rewrite known error patterns
-    const patterns = s.errorPatterns || [];
+    // Rewrite known error patterns (settings.errors.patterns)
+    const patterns = (s.errors && s.errors.patterns) || [];
     for (const p of patterns) {
       const re = new RegExp(p.re);
       if (re.test(raw)) raw = p.msg;
