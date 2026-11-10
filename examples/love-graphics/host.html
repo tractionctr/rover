@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rover × LÖVE graphics renderer demo</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #111; color: #ccc;
+      font-family: system-ui, sans-serif; }
+    #stage { display: flex; height: 100vh; }
+    #canvas-wrap { flex: 1; display: flex; align-items: center; justify-content: center; }
+    canvas { background: #000; image-rendering: pixelated; }
+    #side { width: 320px; border-left: 1px solid #333; padding: 12px; overflow: auto; }
+    #side h3 { margin: 0 0 8px; font-size: 13px; }
+    #side label { display: block; font-size: 12px; margin: 8px 0 2px; color: #aaa; }
+    #side input[type=range] { width: 100%; }
+    #side .row { display: flex; gap: 6px; }
+    #side button { flex: 1; padding: 6px; background: #2a2a2a; color: #ccc;
+      border: 1px solid #444; border-radius: 4px; cursor: pointer; font-size: 12px; }
+    #side button:hover { background: #3a3a3a; }
+    #log { font-family: ui-monospace, monospace; font-size: 11px; color: #7c7;
+      margin-top: 8px; white-space: pre-wrap; max-height: 120px; overflow: auto;
+      border-top: 1px solid #333; padding-top: 6px; }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <div id="canvas-wrap"><canvas id="screen" width="480" height="360"></canvas></div>
+    <div id="side">
+      <h3>Rover × LÖVE</h3>
+      <label>Rotation speed X: <span id="rxv">1.0</span></label>
+      <input id="rx" type="range" min="0" max="5" step="0.1" value="1" />
+      <label>Rotation speed Y: <span id="ryv">1.5</span></label>
+      <input id="ry" type="range" min="0" max="5" step="0.1" value="1.5" />
+      <div class="row">
+        <button id="run">▶ Run main.lua</button>
+        <button id="reset">↺ Reset</button>
+      </div>
+      <div id="log"></div>
+    </div>
+  </div>
+
+  <!-- Rover: drop the built bundle here in production -->
+  <script type="module" src="/src/main.js"></script>
+  <script type="module" src="host.js"></script>
+</body>
+</html>

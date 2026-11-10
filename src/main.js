@@ -17,6 +17,7 @@ import { StreamLanguage }            from "@codemirror/language";
 import { lua }                       from "@codemirror/legacy-modes/mode/lua";
 import { syntaxHighlighting }        from "@codemirror/language";
 import { getCloserInfo, countUnclosedBlocks, stripLuaNoise } from "./luaBlocks.js";
+import { mergeSettings } from "./settings.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -132,6 +133,12 @@ let saveTimer     = null;
 let timeoutId     = null;
 let runStart      = 0;
 let currentTheme  = "dark";
+
+// ── Host integration ────────────────────────────────────────────────────────
+// Set by window.Rover.configure(). These are passed to the worker on every
+// run so a host page can sandbox code and inject native functions.
+let activeSettings = null;   // validated settings object (or null = defaults)
+let activeGlobals  = null;   // { name: fn(L) => number } host globals
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -376,14 +383,18 @@ function runCode() {
     showResult(`❌ Timed out (${elapsed} ms)`, true, 0);
   }, TIMEOUT_MS);
 
-  worker.postMessage(code);
+  // Pass the active host settings + globals so the run is sandboxed.
+  const msg = { code };
+  if (activeSettings) msg.settings = activeSettings;
+  if (activeGlobals)  msg.globals  = activeGlobals;
+  worker.postMessage(msg);
 }
 
 function handleWorkerMessage(e) {
   clearTimeout(timeoutId);
   const raw     = e.data.output || "";
   const elapsed = ((performance.now() - runStart)).toFixed(0);
-  const isError = /^\[string ".+"\]:\d+:/.test(raw) || /stack overflow/.test(raw);
+  const isError = e.data.isError || /^\[string ".+"\]:\d+:/.test(raw) || /stack overflow/.test(raw);
   showResult(raw, isError, elapsed);
 }
 
@@ -708,3 +719,35 @@ themeBtn?.addEventListener("click", () => {
 });
 
 console.log(`[rover] ${currentTheme} theme loaded`);
+
+// ─── Public host API ─────────────────────────────────────────────────────────
+//
+// A host page calls window.Rover.configure({ ... }) before the user runs
+// code. Settings are validated and passed to the worker on every run.
+//
+//   window.Rover.configure({
+//     sandbox: { blockedKeywords: ["while", "os.execute"], maxInstructions: 50000 },
+//     runtime: { globals: { setPixel: (L, x, y, r, g, b) => { ... } } },
+//     errors:  { patterns: [{ re: "bad pixel", msg: "Use setPixel() instead." }] }
+//   });
+//
+// Globals are JS functions (L, ...args) => number of Lua stack values pushed.
+// See worker.js for the argument-reading helpers.
+
+window.Rover = {
+  configure(userSettings, userGlobals) {
+    activeSettings = mergeSettings(userSettings);
+    activeGlobals = userGlobals || null;
+    return window.Rover;
+  },
+  getSettings() {
+    return activeSettings;
+  },
+  run(code) {
+    if (code != null) editor.dispatch({
+      changes: { from: 0, to: editor.state.doc.length, insert: code }
+    });
+    runCode();
+  },
+  clear() { clearOutput(); },
+};
