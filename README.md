@@ -4,11 +4,9 @@ A self-contained web-based Lua console — write, edit, and run Lua 5.1 code in
 your browser with no backend, no install, and no account.
 
 Rover is an **IDE, not a specific engine**. It ships with a built-in browser
-Lua VM, but it can also drive any external Lua runtime (LÖVE2D, LuaJIT,
-Unity, Godot, …) over a WebSocket bridge. That's how you build an in-game
-code console — where the player
-types code that calls your game's real functions, with the sandbox
-controlled by you.
+Lua VM, but it can also drive any external Lua runtime over a WebSocket
+bridge. That's how you build an in-game code console — the player types code
+that calls your game's real functions, with the sandbox controlled by you.
 
 Built on [CodeMirror 6](https://codemirror.net/) for the editor and
 [fengari-web](https://github.com/fengari/fengari-web) for the Lua VM, so syntax
@@ -97,57 +95,39 @@ Rover editor (browser) ── WebSocket ──▶ bridge server ──▶ your L
 - **`bridge/`** — a Node.js WebSocket bridge server with built-in adapters.
 - **`src/runtime.js`** — `LocalRuntime` (browser VM, default) and
   `RemoteRuntime` (WebSocket to an external engine).
-- **`examples/love2d/game-bridge.lua`** — drop-in for LÖVE2D games.
+- **`examples/<engine>/game-bridge.<ext>`** — engine-specific integration stubs.
 
-### LÖVE2D game setup
+To connect an external engine, implement two things:
+1. A tiny bridge that accepts Rover messages on a WebSocket and forwards them
+   to your Lua VM (or Node adapter). It passes the player's code + sandbox
+   settings into `luaL_dostring()` or equivalent.
+2. A globals map from your game to the bridge so Rover knows which
+   functions the player is allowed to call.
 
-1. Copy `examples/love2d/game-bridge.lua` into your project.
-2. In `love.load()`, start it with the functions you want the player to call:
+### Bridge server
 
-```lua
-local bridge = require("game-bridge")
-
-function love.load()
-    bridge.start({
-        port = 37373,
-        globals = {
-            move  = function(dx, dy) myObject.x = myObject.x + dx end,
-            rotate = function(rx, ry) myObject.rx = myObject.rx + rx end,
-            setColor = function(r, g, b) myObject.color = {r, g, b, 1} end,
-        }
-    })
-end
+```bash
+node bridge/index.js --port 37373 --lua <adapter> --globals ./my-globals.js
 ```
 
-3. In Rover, switch to remote mode:
+- `--lua` selects the runtime adapter (`fengari` by default). Write custom
+  adapters in `bridge/adapters/<name>.js`.
+- `--globals` points to a JS module exporting the game's API as Lua-callable
+  functions.
+
+### Engine integration steps
+
+1. Start a WebSocket bridge on a known port, forwarding runs into your Lua
+   state. Expose only the functions players should have access to.
+2. In Rover, switch to remote mode:
 
 ```javascript
 window.Rover.useRuntime("remote", "ws://localhost:37373");
 ```
 
-Now the player's code runs inside your running game, calling your real
-functions. Only the globals you expose are callable — everything else
-(`os.execute`, `io.*`, file access, …) can be blocked via the sandbox.
-
-### Bridge server
-
-```bash
-node bridge/index.js --port 37373 --lua fengari --globals ./my-globals.js
-```
-
-`--globals` points to a JS module exporting the game's API:
-
-```javascript
-// my-globals.js
-export default {
-    setPixel(L) {
-        const x = fengari.lauxlib.luaL_checknumber(L, 1);
-        const y = fengari.lauxlib.luaL_checknumber(L, 2);
-        // ... write to your framebuffer ...
-        return 0;
-    }
-};
-```
+That's it. Now the player's code executes inside your game with access to
+your exposed globals — anything not explicitly exposed is unreachable.
+You control the sandbox entirely via `window.Rover.configure({...})`.
 
 ### Sandbox settings
 
@@ -175,9 +155,9 @@ src/
   themes/        # VS Code dark / light themes
 bridge/
   index.js       # WebSocket bridge server
-  adapters/      # engine adapters (fengari, love2d)
+  adapters/      # engine adapters (fengari + any custom ones you add)
 examples/
-  love2d/        # in-game IDE example for LÖVE2D
+  <engine>/      # engine-specific integration stubs (add your own)
 ```
 
 ## Testing
