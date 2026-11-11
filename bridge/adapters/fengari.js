@@ -8,8 +8,6 @@
 import fengari from "fengari-web";
 
 export async function run(code, settings, globals) {
-  // globals come from the bridge CLI (--globals), not the wire — they are
-  // JS functions and can't be JSON-serialized. Pass them through unchanged.
   return runLua(code, settings, globals);
 }
 
@@ -84,10 +82,13 @@ function runLua(code, settings, globals) {
   if (globals && typeof globals === "object") {
     for (const [name, fn] of Object.entries(globals)) {
       fengari.lua.lua_pushjsfunction(L, function (L) {
-        // Any exception thrown here is automatically picked up by fengari's
-        // jsfunction wrapper, which pushes it back into the Lua state. Just
-        // let it propagate — no need to call luaL_error manually.
-        return fn(L);
+        try {
+          return fn(L);
+        } catch (err) {
+          // fengari-web's jsfunction wrapper intercepts exceptions from the JS
+          // function and re-throws them as Lua errors. Just let it propagate.
+          throw err;
+        }
       });
       fengari.lua.lua_setglobal(L, name);
     }
