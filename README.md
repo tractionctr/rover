@@ -6,7 +6,7 @@ your browser with no backend, no install, and no account.
 Rover is an **IDE, not a specific engine**. It ships with a built-in browser
 Lua VM, but it can also drive any external Lua runtime (LÖVE2D, LuaJIT,
 Unity, Godot, …) over a WebSocket bridge. That's how you build an in-game
-code console — like the game *The Farmer Was Replaced* — where the player
+code console — where the player
 types code that calls your game's real functions, with the sandbox
 controlled by you.
 
