@@ -21,6 +21,7 @@
     "codemirror": "^6.0.2",
     "fengari": "^0.1.5",
     "fengari-web": "^0.1.4",
-    "prismjs": "^1.30.0"
+    "prismjs": "^1.30.0",
+    "ws": "^8.22.2"
   }
 }

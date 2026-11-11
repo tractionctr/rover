@@ -18,6 +18,7 @@ import { lua }                       from "@codemirror/legacy-modes/mode/lua";
 import { syntaxHighlighting }        from "@codemirror/language";
 import { getCloserInfo, countUnclosedBlocks, stripLuaNoise } from "./luaBlocks.js";
 import { mergeSettings } from "./settings.js";
+import { createRuntime } from "./runtime.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -127,7 +128,7 @@ document.querySelector("#app").innerHTML = `
 // ─── State ────────────────────────────────────────────────────────────────────
 
 let runHistory    = [];
-let worker        = null;
+let runtime       = null;   // LocalRuntime (browser) or RemoteRuntime (bridge)
 let fontSize      = 14;
 let saveTimer     = null;
 let timeoutId     = null;
@@ -366,10 +367,11 @@ function runCode() {
   const outputEl = document.getElementById("output");
   if (!outputEl) return;
 
-  if (!worker) {
-    worker = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
-    worker.onmessage = handleWorkerMessage;
-    worker.onerror   = () => showResult("Worker crashed — see console", true, 0);
+  if (!runtime) {
+    // Default to the browser VM unless a host configured otherwise.
+    runtime = createRuntime(window.ROVER_RUNTIME || "local");
+    runtime.onmessage = handleRuntimeMessage;
+    runtime.onerror   = () => showResult("Runtime crashed — see console", true, 0);
   }
 
   clearErrorHighlight();
@@ -378,7 +380,7 @@ function runCode() {
 
   runStart   = performance.now();
   timeoutId  = setTimeout(() => {
-    worker.terminate(); worker = null;
+    runtime.terminate(); runtime = null;
     const elapsed = ((performance.now() - runStart)).toFixed(0);
     showResult(`❌ Timed out (${elapsed} ms)`, true, 0);
   }, TIMEOUT_MS);
@@ -387,14 +389,14 @@ function runCode() {
   const msg = { code };
   if (activeSettings) msg.settings = activeSettings;
   if (activeGlobals)  msg.globals  = activeGlobals;
-  worker.postMessage(msg);
+  runtime.run(msg.code, msg.settings, msg.globals);
 }
 
-function handleWorkerMessage(e) {
+function handleRuntimeMessage(data) {
   clearTimeout(timeoutId);
-  const raw     = e.data.output || "";
+  const raw     = data.output || "";
   const elapsed = ((performance.now() - runStart)).toFixed(0);
-  const isError = e.data.isError || /^\[string ".+"\]:\d+:/.test(raw) || /stack overflow/.test(raw);
+  const isError = data.isError || /^\[string ".+"\]:\d+:/.test(raw) || /stack overflow/.test(raw);
   showResult(raw, isError, elapsed);
 }
 
@@ -723,7 +725,7 @@ console.log(`[rover] ${currentTheme} theme loaded`);
 // ─── Public host API ─────────────────────────────────────────────────────────
 //
 // A host page calls window.Rover.configure({ ... }) before the user runs
-// code. Settings are validated and passed to the worker on every run.
+// code. Settings are validated and passed to the runtime on every run.
 //
 //   window.Rover.configure({
 //     sandbox: { blockedKeywords: ["while", "os.execute"], maxInstructions: 50000 },
@@ -733,6 +735,11 @@ console.log(`[rover] ${currentTheme} theme loaded`);
 //
 // Globals are JS functions (L, ...args) => number of Lua stack values pushed.
 // See worker.js for the argument-reading helpers.
+//
+// Switch the underlying Lua engine:
+//   window.Rover.useRuntime("remote", "ws://localhost:37373")
+// Connects the editor to an external engine (LÖVE2D, LuaJIT, Unity, …)
+// via the Rover bridge. "local" (default) keeps the in-browser fengari VM.
 
 window.Rover = {
   configure(userSettings, userGlobals) {
@@ -742,6 +749,13 @@ window.Rover = {
   },
   getSettings() {
     return activeSettings;
+  },
+  useRuntime(kind, url) {
+    if (runtime) runtime.terminate();
+    runtime = createRuntime(kind, url);
+    runtime.onmessage = handleRuntimeMessage;
+    runtime.onerror   = () => showResult("Runtime crashed — see console", true, 0);
+    return window.Rover;
   },
   run(code) {
     if (code != null) editor.dispatch({
